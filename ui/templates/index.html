@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Channel Scam Detector</title>
+    <!-- Assuming styles.css is in the /static/ directory -->
+    <link rel="stylesheet" href="/static/styles.css">
+    <style>
+        /* Basic styling for layout and cards */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f4f7f6;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+        }
+        .container {
+            width: 100%;
+            max-width: 1200px;
+        }
+        h1 {
+            text-align: center;
+            color: #0056b3;
+        }
+        .main-content {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .card {
+            background-color: #ffffff;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: column;
+        }
+        h2 {
+            margin-top: 0;
+            color: #007bff;
+        }
+        textarea, input[type="file"] {
+            width: 100%;
+            margin-bottom: 10px;
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+        }
+        textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+        button {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 5px;
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        video {
+            background-color: #000;
+            border-radius: 4px;
+            width: 100%;
+        }
+        .alerts-container {
+            grid-column: 1 / -1; /* Make alerts container span full width */
+        }
+        #alerts {
+            min-height: 50px;
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #eee;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .alert {
+            padding: 15px;
+            margin-bottom: 10px;
+            border-left-width: 5px;
+            border-left-style: solid;
+            border-radius: 4px;
+            background-color: #f8f9fa;
+        }
+        .alert.scam {
+            border-left-color: #dc3545; /* Red for scam */
+            color: #721c24;
+            background-color: #f8d7da;
+        }
+        .alert.not-scam {
+            border-left-color: #28a745; /* Green for not scam */
+            color: #155724;
+            background-color: #d4edda;
+        }
+        .alert.info {
+            border-left-color: #17a2b8; /* Blue for info/status */
+            color: #0c5460;
+            background-color: #d1ecf1;
+        }
+        hr {
+            border: none;
+            border-top: 1px solid #ccc;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Multi-Channel Scam Detector</h1>
+        <div class="main-content">
+            <div class="card">
+                <h2>Text Analysis</h2>
+                <textarea id="text-input" placeholder="Enter text (SMS, email, etc.) to analyze..."></textarea>
+                <button onclick="analyzeText()">Analyze Text</button>
+            </div>
+            <div class="card">
+                <h2>Audio Analysis</h2>
+                <input type="file" id="audio-input" accept="audio/*">
+                <button onclick="analyzeAudio()">Analyze Audio</button>
+            </div>
+            <div class="card">
+                <h2>Video File Analysis</h2>
+                <input type="file" id="video-input" accept="video/*">
+                <button id="analyze-video-btn" onclick="analyzeVideo()">Analyze Video File</button>
+            </div>
+            <div class="card">
+                <h2>Live Video Feed</h2>
+                <video id="video-feed" width="320" height="240" autoplay muted playsinline></video>
+                <button id="start-video-btn" onclick="toggleVideoStream()">Start Video Stream</button>
+            </div>
+        </div>
+        <div class="card alerts-container">
+            <h2>Real-Time Alerts</h2>
+            <div id="alerts"><p>Alerts will appear here...</p></div>
+        </div>
+    </div>
+
+    <script>
+        const alertsDiv = document.getElementById('alerts');
+        let alertSocket;
+        let videoSocket;
+        let videoInterval;
+
+        function connectAlertSocket() {
+            if (alertSocket && alertSocket.readyState === WebSocket.OPEN) return;
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            alertSocket = new WebSocket(`${protocol}//${window.location.host}/ws/alerts`);
+            
+            alertSocket.onopen = () => console.log("Alerts WebSocket connection established.");
+            alertSocket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                displayAlert(data);
+            };
+            alertSocket.onclose = () => {
+                console.log("Alerts WebSocket connection closed. Reconnecting...");
+                setTimeout(connectAlertSocket, 2000);
+            };
+            alertSocket.onerror = (error) => console.error("Alerts WebSocket Error:", error);
+        }
+
+        function displayAlert(data) {
+            const firstAlert = alertsDiv.querySelector('p');
+            if (firstAlert) firstAlert.remove();
+
+            const alertElement = document.createElement('div');
+            alertElement.classList.add('alert');
+            
+            let content = `<strong>Analysis Type: ${data.type.replace(/_/g, ' ')}</strong><br>`;
+            const result = data.result;
+
+            if (data.type === 'text_analysis') {
+                const isScam = result.is_scam;
+                const confidence = (result.confidence * 100).toFixed(2);
+                alertElement.classList.add(isScam ? 'scam' : 'not-scam');
+                content += `Prediction: <strong>${isScam ? 'SCAM' : 'NOT SCAM'}</strong> | Confidence: ${confidence}%`;
+            } else if (data.type === 'audio_analysis') {
+                if(result.error) {
+                    content += `Error: ${result.error}`;
+                    alertElement.classList.add('scam');
+                } else {
+                    const isScam = result.scam_analysis.is_scam;
+                    const confidence = (result.scam_analysis.confidence * 100).toFixed(2);
+                    alertElement.classList.add(isScam ? 'scam' : 'not-scam');
+                    content += `Transcription: "<em>${result.transcription}</em>"<br>`;
+                    content += `Prediction: <strong>${isScam ? 'SCAM' : 'NOT SCAM'}</strong> | Confidence: ${confidence}%`;
+                }
+            } else if (data.type === 'video_analysis') { // Live video frame
+                if (result.face_detected) {
+                    content += `Face Detected | Confidence: ${(result.confidence * 100).toFixed(2)}%`;
+                    alertElement.classList.add('not-scam');
+                } else {
+                     return;
+                }
+            } else if (data.type === 'status_update') { // For status messages
+                alertElement.classList.add('info');
+                content = `<strong>Status:</strong> ${data.message}`;
+            } else if (data.type === 'video_file_analysis') { // For final video result
+                const audioRes = result.audio_component;
+                const videoRes = result.video_component;
+                const isScam = audioRes.scam_analysis ? audioRes.scam_analysis.is_scam : false;
+                
+                alertElement.classList.add(isScam ? 'scam' : 'not-scam');
+
+                content = `<strong>Video File Analysis Complete</strong><br><hr>`;
+                content += `<strong>Audio Analysis:</strong><br>`;
+                if (audioRes.error) {
+                    content += `Error: ${audioRes.error}<br>`;
+                } else {
+                    content += `Transcription: "<em>${audioRes.transcription}</em>"<br>`;
+                    content += `Prediction: <strong>${isScam ? 'SCAM' : 'NOT SCAM'}</strong> | Confidence: ${(audioRes.scam_analysis.confidence * 100).toFixed(2)}%<br>`;
+                }
+                content += `<hr><strong>Video Frame Analysis:</strong><br>`;
+                content += videoRes.face_detected ? `Face Detected with ${(videoRes.confidence * 100).toFixed(2)}% confidence` : "No face detected in sample frame.";
+            }
+
+            alertElement.innerHTML = content;
+            alertsDiv.prepend(alertElement);
+        }
+
+        async function analyzeText() {
+            const text = document.getElementById('text-input').value;
+            if (!text) return;
+            await fetch("/analyze/text", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: text })
+            });
+        }
+
+        async function analyzeAudio() {
+            const fileInput = document.getElementById('audio-input');
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append("file", file);
+
+            await fetch("/analyze/audio", {
+                method: "POST",
+                body: formData
+            });
+        }
+
+        async function analyzeVideo() {
+            const fileInput = document.getElementById('video-input');
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            const videoButton = document.getElementById('analyze-video-btn');
+            const formData = new FormData();
+            formData.append("file", file);
+
+            videoButton.disabled = true;
+            videoButton.textContent = 'Analyzing... Please Wait';
+            
+            try {
+                await fetch("/analyze/video", {
+                    method: "POST",
+                    body: formData
+                });
+            } catch (error) {
+                console.error("Failed to analyze video:", error);
+                displayAlert({type: "status_update", message: "Failed to send video for analysis. See console for details."});
+            } finally {
+                videoButton.disabled = false;
+                videoButton.textContent = 'Analyze Video File';
+            }
+        }
+
+        function toggleVideoStream() {
+            if (videoSocket && videoSocket.readyState === WebSocket.OPEN) {
+                stopVideoStream();
+            } else {
+                startVideoStream();
+            }
+        }
+        
+        function startVideoStream() {
+            const videoElement = document.getElementById('video-feed');
+            const videoButton = document.getElementById('start-video-btn');
+
+            navigator.mediaDevices.getUserMedia({ video: true })
+                .then(stream => {
+                    videoElement.srcObject = stream;
+                    
+                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    videoSocket = new WebSocket(`${protocol}//${window.location.host}/ws/video`);
+
+                    videoSocket.onopen = () => {
+                        console.log("Video WebSocket connection established.");
+                        videoButton.textContent = "Stop Video Stream";
+                        videoInterval = setInterval(() => {
+                            if (videoSocket.readyState === WebSocket.OPEN) {
+                                const canvas = document.createElement('canvas');
+                                canvas.width = videoElement.videoWidth;
+                                canvas.height = videoElement.videoHeight;
+                                const ctx = canvas.getContext('2d');
+                                if (ctx) {
+                                    ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+                                    canvas.toBlob(blob => {
+                                        if (blob) videoSocket.send(blob);
+                                    }, 'image/jpeg');
+                                }
+                            }
+                        }, 1000);
+                    };
+
+                    videoSocket.onclose = () => {
+                        console.log("Video WebSocket connection closed.");
+                        stopVideoStream(); 
+                    };
+                })
+                .catch(err => {
+                    console.error("Error accessing camera:", err);
+                    alert("Could not access camera. Please check permissions.");
+                });
+        }
+
+        function stopVideoStream() {
+            const videoElement = document.getElementById('video-feed');
+            const videoButton = document.getElementById('start-video-btn');
+
+            if (videoInterval) clearInterval(videoInterval);
+            if (videoSocket) {
+                videoSocket.close();
+                videoSocket = null;
+            }
+            if (videoElement.srcObject) {
+                videoElement.srcObject.getTracks().forEach(track => track.stop());
+                videoElement.srcObject = null;
+            }
+            videoButton.textContent = "Start Video Stream";
+        }
+        
+        window.onload = connectAlertSocket;
+    </script>
+</body>
+</html>
